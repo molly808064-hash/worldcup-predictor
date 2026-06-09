@@ -1,1 +1,10 @@
+# Python 自动生成的缓存，从来不该进仓库
+__pycache__/
+*.pyc
+
+# 草稿 / 测试文件：留在本地当参考，但不上传
+data/explore.py
+data/model.py
+test/
+test_file.txt
 test.txt
