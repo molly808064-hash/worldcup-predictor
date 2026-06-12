@@ -22,17 +22,40 @@ def load_avg_scores():
                & df["home_team"].isin(teams_2026)
                & df["away_team"].isin(teams_2026)]
 
+    # overall_avg：原有算法，全部比赛（含中立场）
     hs = df_wc.groupby("home_team")["home_score"].sum()
     as_ = df_wc.groupby("away_team")["away_score"].sum()
     hg = df_wc.groupby("home_team").size()
     ag = df_wc.groupby("away_team").size()
-    return hs.add(as_, fill_value=0) / hg.add(ag, fill_value=0)
+    overall_avg = hs.add(as_, fill_value=0) / hg.add(ag, fill_value=0)
+
+    # home_avg / away_avg：只用非中立场比赛
+    # reindex 到全部队伍：没有非中立主（客）场记录的队（如 Ghana、Haiti）场次记 0，
+    # 落入下面的兜底分支，同时避免 KeyError
+    MIN_GAMES = 5  # 样本低于此场次时回退用 overall_avg
+    teams = overall_avg.index
+    non_neutral = df_wc[~df_wc["neutral"]]
+    home_goals = non_neutral.groupby("home_team")["home_score"].sum().reindex(teams, fill_value=0)
+    home_games = non_neutral.groupby("home_team").size().reindex(teams, fill_value=0)
+    away_goals = non_neutral.groupby("away_team")["away_score"].sum().reindex(teams, fill_value=0)
+    away_games = non_neutral.groupby("away_team").size().reindex(teams, fill_value=0)
+
+    # 0 场时除法产生 NaN，但场次 < MIN_GAMES 必被 where 换成 overall_avg
+    home_avg = (home_goals / home_games).where(home_games >= MIN_GAMES, overall_avg)
+    away_avg = (away_goals / away_games).where(away_games >= MIN_GAMES, overall_avg)
+
+    result = pd.DataFrame({
+        "home_avg": home_avg,
+        "away_avg": away_avg,
+        "overall_avg": overall_avg,
+    })
+    result.index.name = "team"  # 索引是队名，沿用 groupby 残留的 home_team 名会误导
+    return result
 
 
-# ---- 你已经写好的模型函数，原封不动 ----
-def score_matrix(team_a, team_b, avg_scores, max_goals=6):
-    lam_a = avg_scores[team_a]
-    lam_b = avg_scores[team_b]
+# ---- 模型函数：纯函数，只负责由两个进球期望算出比分概率矩阵 ----
+# 用哪个均值（主/客/中立的场地逻辑）由调用处决定，队名仅用于行列标签
+def score_matrix(team_a, team_b, lam_a, lam_b, max_goals=6):
     rows = []
     for i in range(max_goals + 1):
         row = []
@@ -54,8 +77,20 @@ st.title("2026 世界杯比分预测")
 
 team_a = st.selectbox("A 队", teams, index=teams.index("Brazil"))
 team_b = st.selectbox("B 队", teams, index=teams.index("England"))
+venue = st.selectbox("场地", ["中立场", f"{team_a} 主场", f"{team_b} 主场"])
 
-table = score_matrix(team_a, team_b, avg_scores)
+# 场地逻辑：home_avg / away_avg 在 load_avg_scores 里已做过样本量回退
+if venue == f"{team_a} 主场":
+    lam_a = avg_scores.loc[team_a, "home_avg"]
+    lam_b = avg_scores.loc[team_b, "away_avg"]
+elif venue == f"{team_b} 主场":
+    lam_a = avg_scores.loc[team_a, "away_avg"]
+    lam_b = avg_scores.loc[team_b, "home_avg"]
+else:  # 中立场
+    lam_a = (avg_scores.loc[team_a, "home_avg"] + avg_scores.loc[team_a, "away_avg"]) / 2
+    lam_b = (avg_scores.loc[team_b, "home_avg"] + avg_scores.loc[team_b, "away_avg"]) / 2
+
+table = score_matrix(team_a, team_b, lam_a, lam_b)
 top = table.stack().sort_values(ascending=False).head(5)  # type: ignore
 # ---- 算胜平负 ----
 p_a_win = 0.0

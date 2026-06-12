@@ -6,5 +6,7 @@ __pycache__/
 data/explore.py
 data/model.py
 test/
-test_file.txt
-test.txt
+check_home_away_counts.py
+verify_stage1.py
+verify_stage2.py
+verify_stage3.py
